@@ -1,1 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#071426">
+  <title>Security Defender</title>
 
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: Arial, sans-serif;
+      background: #071426;
+      color: #ffffff;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+
+    .container {
+      width: 100%;
+      max-width: 440px;
+      text-align: center;
+      background: #102139;
+      padding: 36px 25px;
+      border: 1px solid #263e59;
+      border-radius: 18px;
+    }
+
+    .logo {
+      font-size: 54px;
+      margin-bottom: 15px;
+    }
+
+    h1 {
+      font-size: 29px;
+      margin-bottom: 12px;
+    }
+
+    .subtitle {
+      color: #b6c5d6;
+      line-height: 1.6;
+      margin-bottom: 28px;
+    }
+
+    .features {
+      text-align: left;
+      background: #0a192c;
+      padding: 18px;
+      border-radius: 12px;
+      margin-bottom: 25px;
+      line-height: 2;
+      color: #dce8f5;
+    }
+
+    .google-button {
+      display: block;
+      width: 100%;
+      padding: 15px;
+      background: #ffffff;
+      color: #172337;
+      border-radius: 9px;
+      text-decoration: none;
+      font-weight: bold;
+      font-size: 16px;
+    }
+
+    .google-button:hover {
+      background: #e5eaf0;
+    }
+
+    .notice {
+      font-size: 12px;
+      color: #aab9cb;
+      line-height: 1.7;
+      margin-top: 20px;
+    }
+
+    footer {
+      margin-top: 28px;
+      color: #8295aa;
+      font-size: 12px;
+    }
+  </style>
+</head>
+
+<body>
+  <main class="container">
+
+    <div class="logo">🛡️</div>
+
+    <h1>Security Defender</h1>
+
+    <p class="subtitle">
+      Take control of your inbox.
+      Organize your Gmail messages with a
+      clear and secure authorization process.
+    </p>
+
+    <div class="features">
+      <p>✓ Gmail inbox organization</p>
+      <p>✓ Email and label management</p>
+      <p>✓ Google-authorized access</p>
+      <p>✓ User-controlled permissions</p>
+    </div>
+
+    <a class="google-button" href="/api/auth/google">
+      Continue with Google
+    </a>
+
+    <p class="notice">
+      By continuing, you will be redirected to Google's
+      official authorization page. Google will show the
+      permissions requested before you decide whether
+      to grant access.
+
+      Security Defender will request Gmail access needed
+      to read and organize messages and labels.
+      You can decline or revoke access at any time.
+    </p>
+
+    <footer>
+      © 2026 Security Defender. All rights reserved.
+    </footer>
+
+  </main>
+</body>
+</html>
