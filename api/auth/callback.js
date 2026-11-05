@@ -3,7 +3,9 @@ import crypto from "node:crypto";
 
 function getCookie(req, name) {
   const cookies = (req.headers.cookie || "").split(";");
-  const item = cookies.find((c) => c.trim().startsWith(name + "="));
+  const item = cookies.find(
+    (c) => c.trim().startsWith(name + "=")
+  );
   return item ? item.trim().slice(name.length + 1) : "";
 }
 
@@ -19,16 +21,15 @@ function encryptToken(token, secret) {
     cipher.update(token, "utf8"),
     cipher.final()
   ]);
-  const tag = cipher.getAuthTag();
 
   return [
     iv.toString("base64url"),
-    tag.toString("base64url"),
+    cipher.getAuthTag().toString("base64url"),
     encrypted.toString("base64url")
   ].join(".");
 }
 
-function clearCookies() {
+function clearOAuthCookies() {
   return [
     "oauth_state=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0",
     "oauth_signature=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0"
@@ -36,6 +37,8 @@ function clearCookies() {
 }
 
 export default async function handler(req, res) {
+  res.setHeader("Cache-Control", "no-store");
+
   if (req.method !== "GET") {
     return res.status(405).send("Method not allowed");
   }
@@ -60,19 +63,23 @@ export default async function handler(req, res) {
     return res.status(500).send("Server configuration is incomplete.");
   }
 
-  const url = new URL(req.url, "https://security-defender-app.vercel.app");
+  const url = new URL(
+    req.url,
+    "https://security-defender-app.vercel.app"
+  );
+
   const code = url.searchParams.get("code");
   const returnedState = url.searchParams.get("state");
   const savedState = getCookie(req, "oauth_state");
   const savedSignature = getCookie(req, "oauth_signature");
 
-  res.setHeader("Set-Cookie", clearCookies());
-
   if (url.searchParams.get("error")) {
-    return res.status(400).send("Google authorization was not completed.");
+    res.setHeader("Set-Cookie", clearOAuthCookies());
+    return res.status(400).send("Google authorization was cancelled.");
   }
 
   if (!code || !returnedState || !savedState || !savedSignature) {
+    res.setHeader("Set-Cookie", clearOAuthCookies());
     return res.status(400).send("Authorization response is incomplete.");
   }
 
@@ -81,14 +88,15 @@ export default async function handler(req, res) {
     .update(savedState)
     .digest("hex");
 
-  const signatureBuffer = Buffer.from(savedSignature, "hex");
-  const expectedBuffer = Buffer.from(expectedSignature, "hex");
+  const actual = Buffer.from(savedSignature, "hex");
+  const expected = Buffer.from(expectedSignature, "hex");
 
   if (
     returnedState !== savedState ||
-    signatureBuffer.length !== expectedBuffer.length ||
-    !crypto.timingSafeEqual(signatureBuffer, expectedBuffer)
+    actual.length !== expected.length ||
+    !crypto.timingSafeEqual(actual, expected)
   ) {
+    res.setHeader("Set-Cookie", clearOAuthCookies());
     return res.status(403).send("Authorization state validation failed.");
   }
 
@@ -113,6 +121,7 @@ export default async function handler(req, res) {
     const tokens = await tokenResponse.json();
 
     if (!tokenResponse.ok || !tokens.access_token) {
+      res.setHeader("Set-Cookie", clearOAuthCookies());
       return res.status(400).send("Google token exchange failed.");
     }
 
@@ -127,20 +136,30 @@ export default async function handler(req, res) {
 
     const profile = await profileResponse.json();
 
-    if (!profileResponse.ok || !profile.sub || !profile.email) {
-      return res.status(400).send("Could not verify the Google account.");
+    if (
+      !profileResponse.ok ||
+      !profile.sub ||
+      !profile.email ||
+      profile.email_verified !== true
+    ) {
+      res.setHeader("Set-Cookie", clearOAuthCookies());
+      return res.status(400).send("Google account verification failed.");
     }
 
-    const record = {
+    const supabaseUrl = NEXT_PUBLIC_SUPABASE_URL.replace(/\/$/, "");
+    const apiHeaders = {
+      apikey: SUPABASE_SECRET_KEY,
+      Authorization: `Bearer ${SUPABASE_SECRET_KEY}`,
+      "Content-Type": "application/json"
+    };
+
+    const connection = {
       google_sub: profile.sub,
       email: profile.email,
       access_token_encrypted: encryptToken(
         tokens.access_token,
         SESSION_SECRET
       ),
-      refresh_token_encrypted: tokens.refresh_token
-        ? encryptToken(tokens.refresh_token, SESSION_SECRET)
-        : null,
       token_expires_at: new Date(
         Date.now() + Number(tokens.expires_in || 3600) * 1000
       ).toISOString(),
@@ -148,28 +167,72 @@ export default async function handler(req, res) {
       updated_at: new Date().toISOString()
     };
 
-    const databaseResponse = await fetch(
-      `${NEXT_PUBLIC_SUPABASE_URL}/rest/v1/gmail_connections?on_conflict=google_sub`,
+    if (tokens.refresh_token) {
+      connection.refresh_token_encrypted = encryptToken(
+        tokens.refresh_token,
+        SESSION_SECRET
+      );
+    }
+
+    const connectionResponse = await fetch(
+      `${supabaseUrl}/rest/v1/gmail_connections?on_conflict=google_sub`,
       {
         method: "POST",
         headers: {
-          apikey: SUPABASE_SECRET_KEY,
-          Authorization: `Bearer ${SUPABASE_SECRET_KEY}`,
-          "Content-Type": "application/json",
+          ...apiHeaders,
           Prefer: "resolution=merge-duplicates,return=minimal"
         },
-        body: JSON.stringify(record)
+        body: JSON.stringify(connection)
       }
     );
 
-    if (!databaseResponse.ok) {
-      return res.status(500).send("Could not securely save the Gmail connection.");
+    if (!connectionResponse.ok) {
+      res.setHeader("Set-Cookie", clearOAuthCookies());
+      return res.status(500).send("Could not save the Gmail connection.");
     }
 
+    const sessionToken = crypto.randomBytes(32).toString("base64url");
+    const sessionHash = crypto
+      .createHash("sha256")
+      .update(sessionToken)
+      .digest("hex");
+
+    const expiresAt = new Date(
+      Date.now() + 7 * 24 * 60 * 60 * 1000
+    ).toISOString();
+
+    const sessionResponse = await fetch(
+      `${supabaseUrl}/rest/v1/app_sessions`,
+      {
+        method: "POST",
+        headers: {
+          ...apiHeaders,
+          Prefer: "return=minimal"
+        },
+        body: JSON.stringify({
+          session_hash: sessionHash,
+          google_sub: profile.sub,
+          email: profile.email,
+          expires_at: expiresAt
+        })
+      }
+    );
+
+    if (!sessionResponse.ok) {
+      res.setHeader("Set-Cookie", clearOAuthCookies());
+      return res.status(500).send("Could not create the login session.");
+    }
+
+    res.setHeader("Set-Cookie", [
+      ...clearOAuthCookies(),
+      `sd_session=${sessionToken}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=604800`
+    ]);
+
     return res.status(200).send(
-      "Google authorization completed. Your Gmail connection was saved."
+      "Google account connected and login session created."
     );
   } catch (error) {
+    res.setHeader("Set-Cookie", clearOAuthCookies());
     return res.status(500).send("Authorization could not be completed.");
   }
 }
